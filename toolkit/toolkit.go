@@ -41,6 +41,6 @@ func (t *Toolkit) Test(ctx context.Context, dirs []string) (string, error) {
 }
 
 // Bench runs `opa bench` and returns the raw output.
-func (t *Toolkit) Bench(ctx context.Context, paths []string, inputFile string) (string, error) {
-	return bench.Run(ctx, paths, inputFile)
+func (t *Toolkit) Bench(ctx context.Context, query string, paths []string, inputFile string) (string, error) {
+	return bench.Run(ctx, query, paths, inputFile)
 }
