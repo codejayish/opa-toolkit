@@ -6,11 +6,11 @@ A unified Go library that simplifies policy development with the Open Policy Age
 
 ## Features
 
--  Linting with [Regal](https://github.com/StyraInc/regal)
--  Formatting using [OPA Formatter](https://www.openpolicyagent.org/docs/latest/tools/#format)
--  Testing using `opa test` with JSON and coverage support
--  Benchmarking using `opa bench`
--  Simple and unified interface for use in CI/CD or local development
+* **Linting** with [Regal](https://github.com/StyraInc/regal)
+* **Formatting** using [OPA Formatter](https://www.openpolicyagent.org/docs/latest/tools/#format)
+* **Testing** via `opa test` with JSON output and coverage support
+* **Benchmarking** via `opa bench`
+* **Unified interface** suitable for CI/CD integration or local development
 
 ---
 
@@ -18,17 +18,13 @@ A unified Go library that simplifies policy development with the Open Policy Age
 
 ```bash
 go get github.com/codejayish/opa-toolkit
-
+```
 
 ---
 
-## How to Use the OPA Toolkit
-
-Here's a step-by-step guide to using the toolkit in your Go application:
+## Usage
 
 ### 1. Import the Toolkit
-
-Import the package in your Go code:
 
 ```go
 import (
@@ -38,18 +34,18 @@ import (
 
     "github.com/codejayish/opa-toolkit/toolkit"
 )
+```
 
 ### 2. Initialize the Toolkit
 
-Create a new instance and a context:
-
 ```go
 ctx := context.Background()
-tk := toolkit.New()
+tk  := toolkit.New()
+```
 
 ### 3. Run Linter on Policies
 
-Use the linter to detect issues in your `.rego` files. It leverages Regal and returns structured findings.
+Leverage Regal to detect issues in your `.rego` files and receive structured findings.
 
 ```go
 findings, err := tk.Lint(ctx, []string{"examples/policies"})
@@ -57,10 +53,11 @@ if err != nil {
     panic(err)
 }
 fmt.Printf("Lint findings:\n%+v\n", findings)
+```
 
 ### 4. Format Rego Files
 
-Format raw Rego source code. This is useful for in-memory formatting or pre-commit hooks.
+Format in-memory or on-disk Rego code (ideal for pre-commit hooks).
 
 ```go
 raw, err := os.ReadFile("examples/policies/example.rego")
@@ -76,10 +73,11 @@ if err != nil {
 }
 
 fmt.Println("Formatted Code:\n", string(formattedMap["examples/policies/example.rego"]))
+```
 
 ### 5. Run Tests with Coverage
 
-Execute `opa test` with automatic JSON output and coverage reporting.
+Execute `opa test` with automatic JSON parsing and coverage reporting.
 
 ```go
 testOutput, err := tk.Test(ctx, []string{"examples/policies", "examples/data"})
@@ -87,10 +85,11 @@ if err != nil {
     fmt.Println("Test failed:", err)
 }
 fmt.Println("Test output:\n", testOutput)
+```
 
 ### 6. Run Benchmarks on Policies
 
-Benchmark specific rules using `opa bench`, providing policy paths and an optional input file.
+Invoke `opa bench` to measure performance of specific rules.
 
 ```go
 benchOutput, err := tk.Bench(ctx, []string{"examples/policies"}, "examples/data/input.json")
@@ -98,19 +97,24 @@ if err != nil {
     fmt.Println("Bench failed:", err)
 }
 fmt.Println("Bench output:\n", benchOutput)
+```
 
-## 📁 Example Project Structure
+---
 
-A typical project using this toolkit might look like this:
+## Example Project Structure
 
-```bash
+```
 opa-demo/
-├── main.go               # Your Go application using the toolkit
 ├── go.mod
 ├── go.sum
-└── examples/             # Your OPA policies and data
+├── main.go               # Your Go application using the OPA Toolkit
+└── examples/             # OPA policies and data
     ├── policies/
-    │   ├── example.rego      # Your policy file
-    │   └── example_test.rego # Your test file
+    │   ├── example.rego      # Policy definition
+    │   └── example_test.rego # Policy tests
     └── data/
-        └── input.json        # Sample input data for testing/benchmarking
+        └── input.json        # Sample input for testing/benchmarking
+```
+
+---
+
