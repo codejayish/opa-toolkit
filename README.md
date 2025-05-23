@@ -17,4 +17,4 @@ A unified Go library that simplifies policy development with the Open Policy Age
 ## Installation
 
 ```bash
-go get github.com/yourusername/opa-toolkit
+go get github.com/codejayish/opa-toolkit
