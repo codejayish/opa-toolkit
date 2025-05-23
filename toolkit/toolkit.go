@@ -9,6 +9,16 @@ import (
 	"github.com/codejayish/opa-toolkit/internal/test"
 )
 
+// Re-export config and result types so external users (like opa-demo) can use them
+type (
+	LintConfig      = lint.Config
+	FormatConfig    = format.Config
+	TestConfig      = test.Config
+	BenchConfig     = bench.Config
+	BenchmarkResult = bench.BenchmarkResult
+	TestResult      = test.TestResult
+)
+
 // Toolkit is the unified interface for OPA tooling.
 type Toolkit struct{}
 
