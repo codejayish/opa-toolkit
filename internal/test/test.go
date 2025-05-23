@@ -54,7 +54,7 @@ func Run(ctx context.Context, rootDirs []string) (string, error) {
 			localCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 
-			cmd := exec.CommandContext(localCtx, "opa", "test", testDir, "--format", "json")
+			cmd := exec.CommandContext(localCtx, "opa", "test", testDir, "--format", "json", "--coverage")
 			var out bytes.Buffer
 			cmd.Stdout = &out
 			cmd.Stderr = &out
