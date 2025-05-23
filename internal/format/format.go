@@ -1,7 +1,6 @@
 package format
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -13,35 +12,42 @@ import (
 	opaformat "github.com/open-policy-agent/opa/format"
 )
 
-// Format takes raw Rego source bytes, parses them, and returns formatted output.
+// Config holds formatting options and behavior hooks.
+type Config struct {
+	MaxWorkers      int               // Number of concurrent workers
+	Write           bool              // If true, write files back to disk
+	OnFileFormatted func(path string) // Optional progress callback
+}
+
+// Format parses and formats the input Rego source.
 func Format(input []byte) ([]byte, error) {
 	mod, err := ast.ParseModule("", string(input))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse error: %w", err)
 	}
 
 	formatted, err := opaformat.Ast(mod)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("format error: %w", err)
 	}
 
-	buf := bytes.NewBuffer(nil)
-	if _, err := buf.Write(formatted); err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
+	return formatted, nil
 }
 
-// FormatAll concurrently formats all .rego files under the given paths.
-// Returns a map[filePath]formattedContent and an error if any.
-func FormatAll(ctx context.Context, paths []string) (map[string][]byte, error) {
-	result := make(map[string][]byte)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	var firstErr error
+// FormatAll discovers, formats, and optionally writes .rego files.
+func FormatAll(ctx context.Context, paths []string, cfg Config) (map[string][]byte, error) {
+	if cfg.MaxWorkers <= 0 {
+		return nil, fmt.Errorf("MaxWorkers must be > 0")
+	}
 
-	sem := make(chan struct{}, 8) // limit to 8 concurrent formatters
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		result = make(map[string][]byte)
+		errors []error
+	)
+
+	sem := make(chan struct{}, cfg.MaxWorkers)
 
 	for _, root := range paths {
 		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -50,17 +56,20 @@ func FormatAll(ctx context.Context, paths []string) (map[string][]byte, error) {
 			}
 			if !info.IsDir() && strings.HasSuffix(path, ".rego") {
 				wg.Add(1)
-				go func(p string) {
+				go func(p string, mode os.FileMode) {
 					defer wg.Done()
-					sem <- struct{}{}
-					defer func() { <-sem }()
+
+					select {
+					case <-ctx.Done():
+						return
+					case sem <- struct{}{}:
+						defer func() { <-sem }()
+					}
 
 					data, err := os.ReadFile(p)
 					if err != nil {
 						mu.Lock()
-						if firstErr == nil {
-							firstErr = fmt.Errorf("error reading %s: %w", p, err)
-						}
+						errors = append(errors, fmt.Errorf("read %s: %w", p, err))
 						mu.Unlock()
 						return
 					}
@@ -68,9 +77,7 @@ func FormatAll(ctx context.Context, paths []string) (map[string][]byte, error) {
 					formatted, err := Format(data)
 					if err != nil {
 						mu.Lock()
-						if firstErr == nil {
-							firstErr = fmt.Errorf("formatting error in %s: %w", p, err)
-						}
+						errors = append(errors, fmt.Errorf("format %s: %w", p, err))
 						mu.Unlock()
 						return
 					}
@@ -78,15 +85,55 @@ func FormatAll(ctx context.Context, paths []string) (map[string][]byte, error) {
 					mu.Lock()
 					result[p] = formatted
 					mu.Unlock()
-				}(path)
+
+					if cfg.Write {
+						if err := atomicWrite(p, formatted, mode); err != nil {
+							mu.Lock()
+							errors = append(errors, fmt.Errorf("write %s: %w", p, err))
+							mu.Unlock()
+							return
+						}
+					}
+
+					if cfg.OnFileFormatted != nil {
+						cfg.OnFileFormatted(p)
+					}
+				}(path, info.Mode())
 			}
 			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("directory walk error: %w", err)
+			errors = append(errors, fmt.Errorf("walk %s: %w", root, err))
 		}
 	}
 
 	wg.Wait()
-	return result, firstErr
+
+	if len(errors) > 0 {
+		return result, fmt.Errorf("encountered %d errors (first: %v)", len(errors), errors[0])
+	}
+	return result, nil
+}
+
+// atomicWrite writes content to a temporary file and renames it atomically.
+func atomicWrite(path string, content []byte, mode os.FileMode) error {
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, content, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// WriteAll provides an alternate way to write pre-formatted content to files.
+func WriteAll(formatted map[string][]byte) error {
+	for path, content := range formatted {
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		if err := atomicWrite(path, content, info.Mode()); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+	}
+	return nil
 }

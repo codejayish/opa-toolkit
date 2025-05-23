@@ -3,25 +3,115 @@ package bench
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 )
 
-// RunSingle executes a single `opa bench` query
-func Run(ctx context.Context, query string, paths []string, inputFile string) (string, error) {
-	args := []string{"bench", query}
+type Config struct {
+	Queries         []string
+	Paths           []string
+	InputFile       string
+	MaxWorkers      int
+	TimeoutPerQuery time.Duration
+	WarmupRuns      int
+	OnQueryComplete func(query string, result BenchmarkResult)
+}
 
+type BenchmarkResult struct {
+	Output   string
+	Stats    BenchmarkStats
+	Duration time.Duration
+	Error    error
+}
+
+type BenchmarkStats struct {
+	Query      string  `json:"query"`
+	Iterations int     `json:"iterations"`
+	MeanNs     float64 `json:"mean_ns"`
+	P99Ns      float64 `json:"p99_ns"`
+	MemoryKB   int     `json:"memory_kb"`
+}
+
+// Run executes multiple benchmark queries concurrently and returns structured results.
+func Run(ctx context.Context, cfg Config) (map[string]BenchmarkResult, error) {
+	if cfg.MaxWorkers <= 0 {
+		cfg.MaxWorkers = 4
+	}
+	if cfg.TimeoutPerQuery <= 0 {
+		cfg.TimeoutPerQuery = 15 * time.Second
+	}
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		results  = make(map[string]BenchmarkResult)
+		firstErr error
+		sem      = make(chan struct{}, cfg.MaxWorkers)
+	)
+
+	for _, query := range cfg.Queries {
+		wg.Add(1)
+		go func(q string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			localCtx, cancel := context.WithTimeout(ctx, cfg.TimeoutPerQuery)
+			defer cancel()
+
+			start := time.Now()
+			output, err := runSingle(localCtx, q, cfg.Paths, cfg.InputFile, cfg.WarmupRuns)
+			duration := time.Since(start)
+
+			result := BenchmarkResult{
+				Output:   output,
+				Duration: duration,
+				Error:    err,
+			}
+
+			if err == nil {
+				stats, parseErr := parseOPAOutput(output, q)
+				if parseErr == nil {
+					result.Stats = stats
+				}
+			}
+
+			mu.Lock()
+			results[q] = result
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			mu.Unlock()
+
+			if cfg.OnQueryComplete != nil {
+				cfg.OnQueryComplete(q, result)
+			}
+		}(query)
+	}
+
+	wg.Wait()
+	return results, firstErr
+}
+
+// runSingle executes `opa bench` for one query and returns its output.
+func runSingle(ctx context.Context, query string, paths []string, inputFile string, warmup int) (string, error) {
+	args := []string{"bench", query, "--format=json"} // Use JSON format for easier parsing
 	if inputFile != "" {
 		args = append(args, "-i", inputFile)
 	}
-
 	for _, path := range paths {
 		args = append(args, "-d", path)
 	}
+	if warmup > 0 {
+		args = append(args, fmt.Sprintf("--warmup=%d", warmup))
+	}
 
 	cmd := exec.CommandContext(ctx, "opa", args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -29,42 +119,36 @@ func Run(ctx context.Context, query string, paths []string, inputFile string) (s
 	if err := cmd.Run(); err != nil {
 		return out.String(), fmt.Errorf("benchmark failed for query %q: %w", query, err)
 	}
-
 	return out.String(), nil
 }
 
-// RunMany concurrently runs `opa bench` for multiple queries, aggregating results.
-func RunMany(ctx context.Context, queries []string, paths []string, inputFile string) (map[string]string, error) {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	results := make(map[string]string)
-	var firstErr error
-
-	sem := make(chan struct{}, 4) // Control parallelism
-
-	for _, query := range queries {
-		wg.Add(1)
-		go func(q string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			// Scoped context per query
-			localCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			defer cancel()
-
-			output, err := Run(localCtx, q, paths, inputFile)
-			mu.Lock()
-			defer mu.Unlock()
-
-			if err != nil && firstErr == nil {
-				firstErr = err
-			}
-			results[q] = output
-		}(query)
+// parseOPAOutput extracts benchmark stats from JSON output.
+func parseOPAOutput(output string, query string) (BenchmarkStats, error) {
+	var report struct {
+		Benchmarks []struct {
+			Query      string  `json:"query"`
+			Iterations int     `json:"iterations"`
+			MeanNs     float64 `json:"mean_ns"`
+			P99Ns      float64 `json:"p99_ns"`
+			MemoryKB   int     `json:"memory_kb"`
+		} `json:"benchmarks"`
 	}
 
-	wg.Wait()
-	return results, firstErr
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return BenchmarkStats{}, fmt.Errorf("failed to parse OPA JSON: %w", err)
+	}
+
+	for _, bench := range report.Benchmarks {
+		if bench.Query == query {
+			return BenchmarkStats{
+				Query:      bench.Query,
+				Iterations: bench.Iterations,
+				MeanNs:     bench.MeanNs,
+				P99Ns:      bench.P99Ns,
+				MemoryKB:   bench.MemoryKB,
+			}, nil
+		}
+	}
+
+	return BenchmarkStats{}, fmt.Errorf("query %q not found in OPA output", query)
 }

@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,14 +13,140 @@ import (
 	"time"
 )
 
-// Run discovers subdirs with .rego files, runs opa test per dir, and aggregates results
-func Run(ctx context.Context, rootDirs []string) (string, error) {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var results []string
-	var allErr error
+type Config struct {
+	Timeout        time.Duration
+	MaxWorkers     int
+	TestFlags      []string                // e.g., ["--verbose"]
+	InputFile      string                  // Optional path to input.json
+	OnTestComplete func(result TestResult) // Optional callback for progress reporting
+}
 
-	// Discover all unique testable dirs
+type TestResult struct {
+	Dir      string
+	Output   string
+	Passed   bool
+	Coverage json.RawMessage
+	Summary  CoverageSummary
+}
+
+type CoverageSummary struct {
+	FileCount    int
+	TotalRules   int
+	CoveredRules int
+	Percent      float64
+}
+
+// Run executes tests on all .rego/.test.rego files in the given directories.
+func Run(ctx context.Context, rootDirs []string, cfg Config) ([]TestResult, error) {
+	if cfg.MaxWorkers <= 0 {
+		return nil, fmt.Errorf("MaxWorkers must be > 0")
+	}
+
+	dirs, err := findTestDirs(rootDirs)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		results []TestResult
+		errors  []error
+	)
+
+	sem := make(chan struct{}, cfg.MaxWorkers)
+
+	for _, dir := range dirs {
+		wg.Add(1)
+		go func(testDir string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			localCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+			defer cancel()
+
+			args := []string{"test", testDir, "--format=json", "--coverage"}
+			if cfg.InputFile != "" {
+				args = append(args, "-i", cfg.InputFile)
+			}
+			args = append(args, cfg.TestFlags...)
+
+			cmd := exec.CommandContext(localCtx, "opa", args...)
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+
+			err := cmd.Run()
+
+			res := TestResult{
+				Dir:    testDir,
+				Output: out.String(),
+				Passed: err == nil,
+			}
+
+			// Attempt to parse coverage
+			if err == nil {
+				res.Coverage = out.Bytes()
+
+				summary, parseErr := summarizeCoverage(res.Coverage)
+				if parseErr == nil {
+					res.Summary = summary
+				}
+			}
+
+			mu.Lock()
+			results = append(results, res)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("test failed for %s: %w", testDir, err))
+			}
+			mu.Unlock()
+
+			if cfg.OnTestComplete != nil {
+				cfg.OnTestComplete(res)
+			}
+		}(dir)
+	}
+
+	wg.Wait()
+
+	if len(errors) > 0 {
+		return results, fmt.Errorf("%d test failures (first: %v)", len(errors), errors[0])
+	}
+	return results, nil
+}
+
+// summarizeCoverage safely extracts rule-level coverage info.
+func summarizeCoverage(raw json.RawMessage) (CoverageSummary, error) {
+	var report struct {
+		Files map[string]struct {
+			Rules map[string]bool `json:"rules"`
+		} `json:"files"`
+	}
+
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return CoverageSummary{}, err
+	}
+
+	summary := CoverageSummary{FileCount: len(report.Files)}
+	for _, file := range report.Files {
+		summary.TotalRules += len(file.Rules)
+		for _, covered := range file.Rules {
+			if covered {
+				summary.CoveredRules++
+			}
+		}
+	}
+
+	if summary.TotalRules > 0 {
+		summary.Percent = (float64(summary.CoveredRules) / float64(summary.TotalRules)) * 100
+	}
+
+	return summary, nil
+}
+
+// findTestDirs returns directories containing at least one .rego file.
+func findTestDirs(rootDirs []string) ([]string, error) {
 	dirSet := make(map[string]struct{})
 	for _, root := range rootDirs {
 		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -27,51 +154,18 @@ func Run(ctx context.Context, rootDirs []string) (string, error) {
 				return err
 			}
 			if !info.IsDir() && strings.HasSuffix(path, ".rego") {
-				dir := filepath.Dir(path)
-				dirSet[dir] = struct{}{}
+				dirSet[filepath.Dir(path)] = struct{}{}
 			}
 			return nil
 		})
 		if err != nil {
-			return "", fmt.Errorf("error walking directories: %w", err)
+			return nil, fmt.Errorf("error walking %s: %w", root, err)
 		}
 	}
 
-	// Convert map to list of dirs
-	var dirs []string
+	dirs := make([]string, 0, len(dirSet))
 	for dir := range dirSet {
 		dirs = append(dirs, dir)
 	}
-
-	// Run tests on each dir in parallel
-	for _, dir := range dirs {
-		wg.Add(1)
-
-		go func(testDir string) {
-			defer wg.Done()
-
-			// Use a child context with timeout
-			localCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-
-			cmd := exec.CommandContext(localCtx, "opa", "test", testDir, "--format", "json", "--coverage")
-			var out bytes.Buffer
-			cmd.Stdout = &out
-			cmd.Stderr = &out
-
-			if err := cmd.Run(); err != nil {
-				mu.Lock()
-				allErr = fmt.Errorf("error testing %s: %w", testDir, err)
-				mu.Unlock()
-			}
-
-			mu.Lock()
-			results = append(results, fmt.Sprintf("=== %s ===\n%s", testDir, out.String()))
-			mu.Unlock()
-		}(dir)
-	}
-
-	wg.Wait()
-
-	return strings.Join(results, "\n\n"), allErr
+	return dirs, nil
 }
