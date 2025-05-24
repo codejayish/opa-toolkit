@@ -85,14 +85,12 @@ func Run(ctx context.Context, rootDirs []string, cfg Config) ([]TestResult, erro
 				Passed: err == nil,
 			}
 
-			// Attempt to parse coverage
-			if err == nil {
-				res.Coverage = out.Bytes()
+			// Always attempt to parse coverage, even on failed tests
+			res.Coverage = out.Bytes()
 
-				summary, parseErr := summarizeCoverage(res.Coverage)
-				if parseErr == nil {
-					res.Summary = summary
-				}
+			summary, parseErr := summarizeCoverage(res.Coverage)
+			if parseErr == nil {
+				res.Summary = summary
 			}
 
 			mu.Lock()
