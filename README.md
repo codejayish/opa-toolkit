@@ -23,14 +23,7 @@ A unified Go library that simplifies policy development with the [Open Policy Ag
 
 ---
 
-## 📦 Installation
-
-```bash
-go get github.com/codejayish/opa-toolkit
-
----
-
-## Usage
+## 📦 Installation and Usage
 
 ### 1. Import the Toolkit
 
