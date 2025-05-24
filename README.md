@@ -1,24 +1,32 @@
-# OPA Toolkit
+# 🔧 OPA Toolkit (Enhanced)
 
-A unified Go library that simplifies policy development with the Open Policy Agent (OPA) by combining linting, formatting, testing, and benchmarking into one interface.
+A unified Go library that simplifies policy development with the [Open Policy Agent (OPA)](https://www.openpolicyagent.org/), integrating:
 
----
-
-## Features
-
-* **Linting** with [Regal](https://github.com/StyraInc/regal)
-* **Formatting** using [OPA Formatter](https://www.openpolicyagent.org/docs/latest/tools/#format)
-* **Testing** via `opa test` with JSON output and coverage support
-* **Benchmarking** via `opa bench`
-* **Unified interface** suitable for CI/CD integration or local development
+- 🧹 **Linting** with Regal
+- 🧼 **Formatting** using OPA Formatter
+- ✅ **Testing** with JSON output and rule-level coverage
+- ⚡ **Benchmarking** with structured metrics (mean, p99, iterations, memory)
+- 🧩 **Summaries** (text and markdown) for CI pipelines or local visibility
 
 ---
 
-## Installation
+## ✨ Features
+
+| Feature       | Description                                      |
+|---------------|--------------------------------------------------|
+| 🔍 Linting     | Run Regal linter on all Rego files               |
+| 🧹 Formatting  | Format `.rego` files using `opa fmt`             |
+| ✅ Testing     | Execute tests with rule-level coverage parsing   |
+| ⚡ Benchmarking| Use `opa bench` and parse output into Go structs |
+| 📊 Summarize   | Generate readable performance summaries          |
+| 🧪 Extensible  | Clean Go API with hook support                   |
+
+---
+
+## 📦 Installation
 
 ```bash
 go get github.com/codejayish/opa-toolkit
-```
 
 ---
 
@@ -48,11 +56,11 @@ tk  := toolkit.New()
 Leverage Regal to detect issues in your `.rego` files and receive structured findings.
 
 ```go
-findings, err := tk.Lint(ctx, []string{"examples/policies"})
-if err != nil {
-    panic(err)
-}
-fmt.Printf("Lint findings:\n%+v\n", findings)
+findings, err := tk.Lint(ctx, []string{"examples/policies"}, toolkit.LintConfig{
+    MaxWorkers:   8,
+    OutputFormat: "text",
+    PrintOutput:  true,
+})
 ```
 
 ### 4. Format Rego Files
@@ -60,19 +68,13 @@ fmt.Printf("Lint findings:\n%+v\n", findings)
 Format in-memory or on-disk Rego code (ideal for pre-commit hooks).
 
 ```go
-raw, err := os.ReadFile("examples/policies/example.rego")
-if err != nil {
-    panic(err)
-}
-
-formattedMap, err := tk.Format(ctx, map[string][]byte{
-    "examples/policies/example.rego": raw,
+formatted, err := tk.Format(ctx, []string{"examples/policies"}, toolkit.FormatConfig{
+    MaxWorkers: 8,
+    Write:      true,
+    OnFileFormatted: func(path string) {
+        fmt.Println("✅ Formatted:", path)
+    },
 })
-if err != nil {
-    panic(err)
-}
-
-fmt.Println("Formatted Code:\n", string(formattedMap["examples/policies/example.rego"]))
 ```
 
 ### 5. Run Tests with Coverage
@@ -80,23 +82,57 @@ fmt.Println("Formatted Code:\n", string(formattedMap["examples/policies/example.
 Execute `opa test` with automatic JSON parsing and coverage reporting.
 
 ```go
-testOutput, err := tk.Test(ctx, []string{"examples/policies", "examples/data"})
-if err != nil {
-    fmt.Println("Test failed:", err)
-}
-fmt.Println("Test output:\n", testOutput)
+results, err := tk.Test(ctx, []string{"examples/policies"}, toolkit.TestConfig{
+    InputFile:  "examples/data/input.json",
+    Timeout:    10 * time.Second,
+    MaxWorkers: 4,
+    TestFlags:  []string{"--verbose"},
+    OnTestComplete: func(res toolkit.TestResult) {
+        fmt.Printf("✅ %s — Coverage: %.2f%% (%d/%d rules)\n",
+            res.Dir,
+            res.Summary.Percent,
+            res.Summary.CoveredRules,
+            res.Summary.TotalRules,
+        )
+    },
+})
 ```
 
-### 6. Run Benchmarks on Policies
+### 6. Benchmark a Single Query
 
 Invoke `opa bench` to measure performance of specific rules.
 
 ```go
-benchOutput, err := tk.Bench(ctx, []string{"examples/policies"}, "examples/data/input.json")
-if err != nil {
-    fmt.Println("Bench failed:", err)
-}
-fmt.Println("Bench output:\n", benchOutput)
+results, err := tk.Bench(ctx, toolkit.BenchConfig{
+    Queries:         []string{"data.policies.allow"},
+    Paths:           []string{"examples/policies"},
+    InputFile:       "examples/data/input.json",
+    MaxWorkers:      4,
+    TimeoutPerQuery: 30 * time.Second,
+    WarmupRuns:      5,
+    OnQueryComplete: func(q string, r toolkit.BenchmarkResult) {
+        fmt.Printf("✅ Benchmark: %s | Mean: %.2f µs | Iter: %d\n", q, r.Stats.MeanNs/1000, r.Stats.Iterations)
+    },
+})
+
+```
+
+### 7.  Benchmark Multiple Queries and Print Summary
+
+Invoke `opa bench` to measure performance of specific rules.
+
+```go
+multiResults, _ := tk.Bench(ctx, toolkit.BenchConfig{
+    Queries:         []string{"data.policies.allow == true", "data.policies.deny == false"},
+    Paths:           []string{"examples/policies"},
+    InputFile:       "examples/data/input.json",
+    MaxWorkers:      4,
+    TimeoutPerQuery: 30 * time.Second,
+    WarmupRuns:      5,
+})
+
+fmt.Println(tk.BenchSummary(multiResults, "text"))
+
 ```
 
 ---
