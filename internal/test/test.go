@@ -16,9 +16,9 @@ import (
 type Config struct {
 	Timeout        time.Duration
 	MaxWorkers     int
-	TestFlags      []string                // e.g., ["--verbose"]
-	InputFile      string                  // Optional path to input.json
-	OnTestComplete func(result TestResult) // Optional callback for progress reporting
+	TestFlags      []string
+	InputFile      string
+	OnTestComplete func(result TestResult)
 }
 
 type TestResult struct {
@@ -36,7 +36,6 @@ type CoverageSummary struct {
 	Percent      float64
 }
 
-// Run executes tests on all .rego/.test.rego files in the given directories.
 func Run(ctx context.Context, rootDirs []string, cfg Config) ([]TestResult, error) {
 	if cfg.MaxWorkers <= 0 {
 		return nil, fmt.Errorf("MaxWorkers must be > 0")
@@ -66,9 +65,15 @@ func Run(ctx context.Context, rootDirs []string, cfg Config) ([]TestResult, erro
 			localCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 			defer cancel()
 
-			args := []string{"test", testDir, "--format=json", "--coverage"}
+			args := []string{
+				"test",
+				testDir,
+				"--format=json",
+				"--coverage",
+				"--ignore=.*",
+			}
 			if cfg.InputFile != "" {
-				args = append(args, "-i", cfg.InputFile)
+				args = append(args, "--input", cfg.InputFile)
 			}
 			args = append(args, cfg.TestFlags...)
 
@@ -78,25 +83,23 @@ func Run(ctx context.Context, rootDirs []string, cfg Config) ([]TestResult, erro
 			cmd.Stderr = &out
 
 			err := cmd.Run()
+			output := out.String()
 
 			res := TestResult{
 				Dir:    testDir,
-				Output: out.String(),
+				Output: output,
 				Passed: err == nil,
 			}
 
-			// Always attempt to parse coverage, even on failed tests
-			res.Coverage = out.Bytes()
-
-			summary, parseErr := summarizeCoverage(res.Coverage)
-			if parseErr == nil {
+			if summary, parseErr := summarizeCoverage([]byte(output)); parseErr == nil {
 				res.Summary = summary
 			}
 
 			mu.Lock()
 			results = append(results, res)
 			if err != nil {
-				errors = append(errors, fmt.Errorf("test failed for %s: %w", testDir, err))
+				errors = append(errors, fmt.Errorf("test failed for %s: %w\nOutput:\n%s",
+					testDir, err, output))
 			}
 			mu.Unlock()
 
@@ -108,44 +111,12 @@ func Run(ctx context.Context, rootDirs []string, cfg Config) ([]TestResult, erro
 
 	wg.Wait()
 
-	// Always return results, even if some tests failed
 	if len(errors) > 0 {
-		return results, nil // DON'T block toolkit execution on test failures
+		return results, fmt.Errorf("%d test failures (first: %v)", len(errors), errors[0])
 	}
 	return results, nil
-
 }
 
-// summarizeCoverage safely extracts rule-level coverage info.
-func summarizeCoverage(raw json.RawMessage) (CoverageSummary, error) {
-	var report struct {
-		Files map[string]struct {
-			Rules map[string]bool `json:"rules"`
-		} `json:"files"`
-	}
-
-	if err := json.Unmarshal(raw, &report); err != nil {
-		return CoverageSummary{}, err
-	}
-
-	summary := CoverageSummary{FileCount: len(report.Files)}
-	for _, file := range report.Files {
-		summary.TotalRules += len(file.Rules)
-		for _, covered := range file.Rules {
-			if covered {
-				summary.CoveredRules++
-			}
-		}
-	}
-
-	if summary.TotalRules > 0 {
-		summary.Percent = (float64(summary.CoveredRules) / float64(summary.TotalRules)) * 100
-	}
-
-	return summary, nil
-}
-
-// findTestDirs returns directories containing at least one .rego file.
 func findTestDirs(rootDirs []string) ([]string, error) {
 	dirSet := make(map[string]struct{})
 	for _, root := range rootDirs {
@@ -153,19 +124,53 @@ func findTestDirs(rootDirs []string) ([]string, error) {
 			if err != nil {
 				return err
 			}
-			if !info.IsDir() && strings.HasSuffix(path, ".rego") {
+			if (!info.IsDir() && strings.HasSuffix(path, "_test.rego")) ||
+				(info.IsDir() && filepath.Base(path) == "test") {
 				dirSet[filepath.Dir(path)] = struct{}{}
 			}
 			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("error walking %s: %w", root, err)
+			return nil, err
 		}
 	}
-
 	dirs := make([]string, 0, len(dirSet))
 	for dir := range dirSet {
 		dirs = append(dirs, dir)
 	}
 	return dirs, nil
+}
+
+func summarizeCoverage(raw []byte) (CoverageSummary, error) {
+	var coverage struct {
+		Coverage float64 `json:"coverage"`
+		Files    map[string]struct {
+			Covered []struct {
+				Start struct{ Row int } `json:"start"`
+				End   struct{ Row int } `json:"end"`
+			} `json:"covered"`
+			NotCovered []struct {
+				Start struct{ Row int } `json:"start"`
+				End   struct{ Row int } `json:"end"`
+			} `json:"not_covered"`
+		} `json:"files"`
+	}
+
+	if err := json.Unmarshal(raw, &coverage); err != nil {
+		return CoverageSummary{}, err
+	}
+
+	total := 0
+	covered := 0
+	for _, file := range coverage.Files {
+		total += len(file.NotCovered) + len(file.Covered)
+		covered += len(file.Covered)
+	}
+
+	return CoverageSummary{
+		FileCount:    len(coverage.Files),
+		TotalRules:   total,
+		CoveredRules: covered,
+		Percent:      coverage.Coverage,
+	}, nil
 }
