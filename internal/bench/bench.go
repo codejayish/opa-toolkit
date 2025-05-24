@@ -70,14 +70,13 @@ func Run(ctx context.Context, cfg Config) (map[string]BenchmarkResult, error) {
 			result := BenchmarkResult{
 				Output:   output,
 				Duration: duration,
-				Error:    err,
+				Error:    err, // still store error if exists
 			}
 
-			if err == nil {
-				stats, parseErr := parseOPAOutput(output, q)
-				if parseErr == nil {
-					result.Stats = stats
-				}
+			// Always try to parse the output, even if error occurred
+			stats, parseErr := parseOPAOutput(output, q)
+			if parseErr == nil {
+				result.Stats = stats
 			}
 
 			mu.Lock()
@@ -99,7 +98,7 @@ func Run(ctx context.Context, cfg Config) (map[string]BenchmarkResult, error) {
 
 // runSingle executes `opa bench` for one query and returns its output.
 func runSingle(ctx context.Context, query string, paths []string, inputFile string, warmup int) (string, error) {
-	args := []string{"bench", query, "--format=json"} // Use JSON format for easier parsing
+	args := []string{"bench", query, "--format=json"}
 	if inputFile != "" {
 		args = append(args, "-i", inputFile)
 	}
@@ -116,10 +115,8 @@ func runSingle(ctx context.Context, query string, paths []string, inputFile stri
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 
-	if err := cmd.Run(); err != nil {
-		return out.String(), fmt.Errorf("benchmark failed for query %q: %w", query, err)
-	}
-	return out.String(), nil
+	err := cmd.Run()
+	return out.String(), err // return output even if there's an error
 }
 
 // parseOPAOutput extracts benchmark stats from JSON output.
