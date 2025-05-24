@@ -72,9 +72,7 @@ func Run(ctx context.Context, rootDirs []string, cfg Config) ([]TestResult, erro
 				"--coverage",
 				"--ignore=.*",
 			}
-			if cfg.InputFile != "" {
-				args = append(args, "--data", cfg.InputFile)
-			}
+
 			args = append(args, cfg.TestFlags...)
 
 			cmd := exec.CommandContext(localCtx, "opa", args...)
