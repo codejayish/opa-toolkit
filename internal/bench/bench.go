@@ -118,31 +118,30 @@ func runSingle(ctx context.Context, query string, paths []string, inputFile stri
 
 // parseOPAOutput extracts benchmark stats from JSON output.
 func parseOPAOutput(output string, query string) (BenchmarkStats, error) {
-	var report struct {
-		Benchmarks []struct {
-			Query      string  `json:"query"`
-			Iterations int     `json:"iterations"`
-			MeanNs     float64 `json:"mean_ns"`
-			P99Ns      float64 `json:"p99_ns"`
-			MemoryKB   int     `json:"memory_kb"`
-		} `json:"benchmarks"`
+	var flat struct {
+		N         int            `json:"N"`
+		Extra     map[string]any `json:"Extra"`
+		MemBytes  int            `json:"MemBytes"`
+		MemAllocs int            `json:"MemAllocs"`
 	}
 
-	if err := json.Unmarshal([]byte(output), &report); err != nil {
-		return BenchmarkStats{}, fmt.Errorf("failed to parse OPA JSON: %w", err)
+	if err := json.Unmarshal([]byte(output), &flat); err != nil {
+		return BenchmarkStats{}, fmt.Errorf("failed to parse flat OPA benchmark JSON: %w", err)
 	}
 
-	for _, bench := range report.Benchmarks {
-		if bench.Query == query {
-			return BenchmarkStats{
-				Query:      bench.Query,
-				Iterations: bench.Iterations,
-				MeanNs:     bench.MeanNs,
-				P99Ns:      bench.P99Ns,
-				MemoryKB:   bench.MemoryKB,
-			}, nil
-		}
+	stats := BenchmarkStats{
+		Query:      query,
+		Iterations: flat.N,
+		MemoryKB:   flat.MemBytes / 1024,
 	}
 
-	return BenchmarkStats{}, fmt.Errorf("query %q not found in OPA output", query)
+	// Pull known fields from Extra if available
+	if v, ok := flat.Extra["histogram_timer_rego_query_eval_ns_mean"].(float64); ok {
+		stats.MeanNs = v
+	}
+	if v, ok := flat.Extra["histogram_timer_rego_query_eval_ns_99%"].(float64); ok {
+		stats.P99Ns = v
+	}
+
+	return stats, nil
 }
