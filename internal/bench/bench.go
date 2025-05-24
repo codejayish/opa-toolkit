@@ -105,9 +105,6 @@ func runSingle(ctx context.Context, query string, paths []string, inputFile stri
 	for _, path := range paths {
 		args = append(args, "-d", path)
 	}
-	if warmup > 0 {
-		args = append(args, fmt.Sprintf("--warmup=%d", warmup))
-	}
 
 	cmd := exec.CommandContext(ctx, "opa", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
