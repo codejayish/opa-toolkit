@@ -2,28 +2,28 @@
 
 A unified Go library that simplifies policy development with the [Open Policy Agent (OPA)](https://www.openpolicyagent.org/), integrating:
 
-- 🧹 **Linting** with Regal
-- 🧼 **Formatting** using OPA Formatter
-- ✅ **Testing** with JSON output and rule-level coverage
-- ⚡ **Benchmarking** with structured metrics (mean, p99, iterations, memory)
-- 🧩 **Summaries** (text and markdown) for CI pipelines or local visibility
+-  **Linting** with Regal
+-  **Formatting** using OPA Formatter
+-  **Testing** with JSON output and rule-level coverage
+-  **Benchmarking** with structured metrics (mean, p99, iterations, memory)
+-  **Summaries** (text and markdown) for CI pipelines or local visibility
 
 ---
 
-## ✨ Features
+##  Features
 
 | Feature       | Description                                      |
 |---------------|--------------------------------------------------|
-| 🔍 Linting     | Run Regal linter on all Rego files               |
-| 🧹 Formatting  | Format `.rego` files using `opa fmt`             |
-| ✅ Testing     | Execute tests with rule-level coverage parsing   |
-| ⚡ Benchmarking| Use `opa bench` and parse output into Go structs |
-| 📊 Summarize   | Generate readable performance summaries          |
-| 🧪 Extensible  | Clean Go API with hook support                   |
+|  Linting     | Run Regal linter on all Rego files               |
+|  Formatting  | Format `.rego` files using `opa fmt`             |
+|  Testing     | Execute tests with rule-level coverage parsing   |
+|  Benchmarking| Use `opa bench` and parse output into Go structs |
+|  Summarize   | Generate readable performance summaries          |
+|  Extensible  | Clean Go API with hook support                   |
 
 ---
 
-## 📦 Installation and Usage
+##  Installation and Usage
 
 ### 1. Import the Toolkit
 
@@ -65,7 +65,7 @@ formatted, err := tk.Format(ctx, []string{"examples/policies"}, toolkit.FormatCo
     MaxWorkers: 8,
     Write:      true,
     OnFileFormatted: func(path string) {
-        fmt.Println("✅ Formatted:", path)
+        fmt.Println(" Formatted:", path)
     },
 })
 ```
@@ -81,7 +81,7 @@ results, err := tk.Test(ctx, []string{"examples/policies"}, toolkit.TestConfig{
     MaxWorkers: 4,
     TestFlags:  []string{"--verbose"},
     OnTestComplete: func(res toolkit.TestResult) {
-        fmt.Printf("✅ %s — Coverage: %.2f%% (%d/%d rules)\n",
+        fmt.Printf(" %s — Coverage: %.2f%% (%d/%d rules)\n",
             res.Dir,
             res.Summary.Percent,
             res.Summary.CoveredRules,
@@ -104,7 +104,7 @@ results, err := tk.Bench(ctx, toolkit.BenchConfig{
     TimeoutPerQuery: 30 * time.Second,
     WarmupRuns:      5,
     OnQueryComplete: func(q string, r toolkit.BenchmarkResult) {
-        fmt.Printf("✅ Benchmark: %s | Mean: %.2f µs | Iter: %d\n", q, r.Stats.MeanNs/1000, r.Stats.Iterations)
+        fmt.Printf(" Benchmark: %s | Mean: %.2f µs | Iter: %d\n", q, r.Stats.MeanNs/1000, r.Stats.Iterations)
     },
 })
 
