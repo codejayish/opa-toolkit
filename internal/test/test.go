@@ -73,7 +73,7 @@ func Run(ctx context.Context, rootDirs []string, cfg Config) ([]TestResult, erro
 				"--ignore=.*",
 			}
 			if cfg.InputFile != "" {
-				args = append(args, "-i", cfg.InputFile)
+				args = append(args, "--data", cfg.InputFile)
 			}
 			args = append(args, cfg.TestFlags...)
 
